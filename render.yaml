@@ -1,0 +1,16 @@
+# Render 一键部署配置
+# 用法：项目推到 GitHub -> Render 里 New > Blueprint -> 选中本仓库
+services:
+  - type: web
+    name: ddl-planner
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: node build.js
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # 注意：免费实例磁盘是临时的，重新部署会清空数据。
+      # 重要数据请定期在 App 里「备份数据」导出。
