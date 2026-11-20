@@ -71,7 +71,7 @@ function configJs() {
   return out;
 }
 
-const SCRIPTS = ['config.js', 'core.js', 'state.js', 'sync.js', 'views.js', 'main.js'];
+const SCRIPTS = ['config.js', 'core.js', 'local-profile.js', 'state.js', 'sync.js', 'profile-ui.js', 'views.js', 'main.js'];
 
 /* ================= 1. 单文件版 ================= */
 let html = read('index.html');
@@ -102,19 +102,17 @@ console.log(`✓ 单文件版：dist/DDL不慌.html  (${kb} KB)`);
 mkdir(APP);
 
 // 普通文件直接复制
-['index.html', 'styles.css', 'core.js', 'state.js', 'sync.js', 'views.js', 'main.js',
-  'manifest.webmanifest', 'sw.js'].forEach(f => {
+['index.html', 'styles.css', 'core.js', 'local-profile.js', 'state.js', 'sync.js',
+  'profile-ui.js', 'views.js', 'main.js', 'manifest.webmanifest', 'sw.js'].forEach(f => {
   fs.copyFileSync(path.join(SRC, f), path.join(APP, f));
 });
 
 // config.js 需要注入后端地址
 fs.writeFileSync(path.join(APP, 'config.js'), configJs(), 'utf8');
 
-console.log('✓ 站点版：app/  （支持离线缓存、添加到主屏幕、账号同步）');
+console.log('✓ 站点版：app/  （纯本地存储 · 可离线 · 可打包 APK）');
 if (BACKEND_URL) {
-  console.log('  ↳ 已预置后端地址：' + BACKEND_URL);
-} else {
-  console.log('  ↳ 未预置后端地址（打包 App 时建议加 --backend=你的地址）');
+  console.log('  ↳ 已预置后端地址：' + BACKEND_URL + '（当前版本不联网，此行可忽略）');
 }
 
 /* ---------- 校验：确保 config.js 被正确引入 ---------- */
