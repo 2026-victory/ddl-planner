@@ -1,15 +1,10 @@
 name: Build Android APK
 
-# 触发方式：
-#   1) 在 GitHub 网页上手动点 Run workflow
-#   2) 推送 tag（如 v1.0.0）
+# 纯本地版：数据存在手机里，不需要后端、不需要填写任何地址。
+# 触发：GitHub 网页手动点 Run workflow，或推送 v* 标签
+
 on:
   workflow_dispatch:
-    inputs:
-      backend_url:
-        description: '后端地址（例如 https://xxx.onrender.com，留空则不预置）'
-        required: false
-        default: ''
   push:
     tags:
       - 'v*'
@@ -35,13 +30,8 @@ jobs:
       - name: 安装 Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 构建前端（注入后端地址）
-        run: |
-          if [ -n "${{ github.event.inputs.backend_url }}" ]; then
-            node build.js --backend="${{ github.event.inputs.backend_url }}"
-          else
-            node build.js
-          fi
+      - name: 构建前端
+        run: node build.js
 
       - name: 安装依赖
         run: npm install
@@ -52,13 +42,6 @@ jobs:
             npx cap add android
           fi
           npx cap sync android
-
-      - name: 允许明文 HTTP（仅当后端是 http）
-        run: |
-          MANIFEST=android/app/src/main/AndroidManifest.xml
-          if ! grep -q 'usesCleartextTraffic' "$MANIFEST"; then
-            sed -i 's#<application#<application android:usesCleartextTraffic="true"#' "$MANIFEST"
-          fi
 
       - name: 授予 gradlew 执行权限
         run: chmod +x android/gradlew
