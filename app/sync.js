@@ -299,21 +299,14 @@ function scheduleSync() {
 function renderSyncStatus() {
   const el = document.querySelector('[data-sync-status]');
   if (!el) return;
-  if (!isLoggedIn()) {
-    el.innerHTML = '<span class="sync-dot off"></span>本地模式';
-    return;
-  }
-  if (Cloud.syncing) {
-    el.innerHTML = '<span class="sync-dot busy"></span>同步中…';
-    return;
-  }
-  if (Cloud.lastError) {
-    el.innerHTML = `<span class="sync-dot err"></span>${esc(Cloud.lastError)}`;
-    return;
-  }
-  const t = Cloud.lastSyncAt ? new Date(Cloud.lastSyncAt) : null;
-  const when = t ? `${C.pad2(t.getHours())}:${C.pad2(t.getMinutes())}` : '';
-  el.innerHTML = `<span class="sync-dot ok"></span>${esc(Cloud.username)}${when ? ' · ' + when + ' 已同步' : ''}`;
+
+  // 纯本地模式：显示档案名 + 数据只在本机
+  const p = (typeof currentProfile === 'function') ? currentProfile() : null;
+  const name = p ? p.name : '我';
+  const total = S.tasks.length;
+  el.innerHTML =
+    `<span class="sync-dot ok"></span>数据在本机` +
+    (total > 0 ? ` · ${total} 个任务` : '');
 }
 
 /* ---------------- 登录界面 ---------------- */
