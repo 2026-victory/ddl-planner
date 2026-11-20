@@ -235,44 +235,37 @@ const ACTIONS = {
     renderFocusOverlay();
   },
 
-  /* ---------------- 账号与同步 ---------------- */
+  /* ---------------- 本机档案 ---------------- */
   'open-account'() {
-    openAccountSheet();
+    openProfileSheet();
   },
-  'acc-login'() {
-    const name = ($('#acc-name').value || '').trim();
-    const pass = ($('#acc-pass').value || '');
-    const srv = ($('#srv-url') ? $('#srv-url').value.trim() : '');
-    if (srv) { Cloud.baseUrl = srv; saveAuth(); }
-    if (!name) { toast('请填写账号名'); return; }
-    doAccountAction(() => cloudLogin(name, pass), '登录中…');
+  'switch-profile'(el) {
+    doSwitchProfile(el.dataset.id);
   },
-  'acc-register'() {
-    const name = ($('#acc-name').value || '').trim();
-    const pass = ($('#acc-pass').value || '');
-    const srv = ($('#srv-url') ? $('#srv-url').value.trim() : '');
-    if (srv) { Cloud.baseUrl = srv; saveAuth(); }
-    if (!name) { toast('请填写账号名'); return; }
-    doAccountAction(() => cloudRegister(name, pass), '注册中…');
+  'profile-menu'(el) {
+    openProfileMenu(el.dataset.id);
   },
-  'cloud-push'() { pushToCloud(false); },
-  'cloud-pull'() {
-    pullFromCloud({ preferRemote: false }).then(r => {
-      if (r.ok) {
-        render();
-        toast(r.mode === 'pulled-remote' ? `已从云端取回 ${r.count} 个任务` : '已是最新');
-      } else {
-        toast('拉取失败：' + (r.error || ''));
-      }
-    });
+  'new-profile'() {
+    doNewProfile();
   },
-  'cloud-logout'() {
-    if (!confirm('退出登录？本机数据会保留，之后仍可重新登录。')) return;
-    cloudLogout().then(() => {
-      closeSheet(true);
+  'delete-profile'(el) {
+    doDeleteProfile(el.dataset.id);
+  },
+  'export-profile'(el) {
+    doExportProfile(el.dataset.id);
+  },
+  'save-profile-name'(el) {
+    const id = el.dataset.id;
+    const name = ($('#pf-name').value || '').trim();
+    if (!name) { toast('名字不能为空'); return; }
+    if (renameProfile(id, name)) {
+      if (id === activeProfileId) save();
       render();
-      toast('已退出，当前为本地模式');
-    });
+      openProfileMenu(id);
+      toast('已重命名');
+    } else {
+      toast('重命名失败');
+    }
   },
   'why-no-server'() {
     openWhyNoServer();
@@ -469,34 +462,10 @@ function boot() {
   renderStorageBanner();
   paintSafariViewport();
   setupUpdateWatcher();
+  renderSyncStatus();
 
-  // 探测后端，并尝试自动同步（不阻塞界面）
-  // 已登录的用户：静默恢复会话 → 直接可用，无需再登录
-  probeServer().then(available => {
-    renderSyncStatus();
-    if (!available) {
-      // App 里没配后端地址时，给一次明确提示（只在首次）
-      if (isNativeShell() && !Cloud.baseUrl && !sessionStorage.getItem('ddl_no_backend_notified')) {
-        try { sessionStorage.setItem('ddl_no_backend_notified', '1'); } catch (e) {}
-        setTimeout(() => {
-          toast('还没连上云服务，当前是本地模式', 2600);
-        }, 1200);
-      }
-      return;
-    }
-    if (isLoggedIn()) {
-      restoreSession().then(res => {
-        renderSyncStatus();
-        if (res.ok && res.mode === 'pulled-remote') {
-          render();
-          toast(`已同步云端 ${res.count} 个任务`);
-        } else if (res.reason === 'expired') {
-          toast('登录已过期，请重新登录');
-          render();
-        }
-      });
-    }
-  });
+  // 纯本地模式：不探测后端、不联网同步
+  // 数据全部存在本机档案里
 
   // 换入口后从备份捞回数据 —— 明确告知用户
   if (recovered) {
