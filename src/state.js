@@ -59,17 +59,19 @@ function currentOriginTag() {
 }
 
 function save() {
-  const payload = JSON.stringify({
-    tasks: S.tasks,
-    events: S.events,
-    settings: S.settings,
-    seeded: S.seeded,
-    fired: S.fired,
-    v: 2
-  });
   try {
-    localStorage.setItem(STORE_KEY, payload);
-    // 每次成功写入后，同步一份自动备份（用于跨来源找回）
+    // 1. 写入「当前档案」的独立存储键
+    if (typeof persistCurrent === 'function' && typeof activeProfileId !== 'undefined' && activeProfileId) {
+      persistCurrent();
+    } else {
+      // 兜底：档案模块未就绪时仍写全局键
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        tasks: S.tasks, events: S.events, settings: S.settings,
+        seeded: S.seeded, fired: S.fired, v: 2
+      }));
+    }
+
+    // 2. 同步一份自动备份（用于换入口/误删时找回）
     if (S.tasks.length > 0 || S.events.length > 0) {
       try {
         localStorage.setItem(AUTO_BACKUP_KEY, JSON.stringify({
@@ -78,14 +80,12 @@ function save() {
           settings: S.settings,
           savedAt: new Date().toISOString(),
           origin: currentOriginTag(),
+          profile: (typeof currentProfile === 'function' && currentProfile()) ? currentProfile().name : '',
           v: 2
         }));
       } catch (e) { /* 备份失败不影响主流程 */ }
     }
     try { localStorage.setItem(ORIGIN_KEY, currentOriginTag()); } catch (e) {}
-
-    // 已登录则触发云端同步（防抖，不阻塞本地保存）
-    if (typeof scheduleSync === 'function') scheduleSync();
 
     if (!S.storageOk) {           // 之前失败过，现在恢复了
       S.storageOk = true;
@@ -141,17 +141,37 @@ function renderStorageBanner() {
 }
 
 function load() {
-  let raw = null;
+  S.dataOrigin = currentOriginTag();
+
+  // 1. 初始化档案系统（会建默认档案）
+  let profileReady = false;
   try {
-    raw = localStorage.getItem(STORE_KEY);
+    if (typeof loadProfiles === 'function') {
+      loadProfiles();
+      profileReady = true;
+    }
     S.storageOk = true;
   } catch (e) {
     S.storageOk = false;
     S.storageError = (e && e.name) || 'Error';
-    console.warn('读取失败', e);
+    console.warn('档案初始化失败', e);
     return false;
   }
-  S.dataOrigin = currentOriginTag();
+
+  // 2. 把旧版全局数据搬进默认档案（只搬一次）
+  if (profileReady && typeof migrateLegacyData === 'function') {
+    try { migrateLegacyData(); } catch (e) {}
+  }
+
+  // 3. 读当前档案的数据
+  let raw = null;
+  try {
+    raw = profileReady
+      ? localStorage.getItem(typeof dataKey === 'function' ? dataKey(activeProfileId) : STORE_KEY)
+      : localStorage.getItem(STORE_KEY);
+  } catch (e) {
+    console.warn('读取失败', e);
+  }
 
   if (!raw) {
     // 主存储没有数据，但可能存在「自动备份」——说明之前用过，只是换了打开方式
@@ -165,7 +185,7 @@ function load() {
       S.recovered = true;              // 标记：本次是从备份自动恢复的
       S.recoveredFrom = bk.origin || '上次的打开方式';
       S.recoveredAt = bk.savedAt || '';
-      // 立刻写回主存储，让这次打开方式也拥有数据
+      // 立刻写回，让当前档案也拥有数据
       setTimeout(() => save(), 0);
       return true;
     }
