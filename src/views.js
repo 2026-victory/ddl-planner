@@ -24,9 +24,9 @@ function renderTopbar() {
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
         ${S.view === 'today' ? `<span class="brand"><span class="dot"></span>智能排程</span>` : ''}
         ${S.view === 'calendar' ? `<button class="btn sm ghost" data-act="goto-today">回到今天</button>` : ''}
-        <button class="account-btn" data-act="open-account" title="账号与同步">
+        <button class="account-btn" data-act="open-account" title="本机档案">
           ${icon('me')}
-          <span class="nm">${isLoggedIn() ? esc(Cloud.username) : '登录'}</span>
+          <span class="nm">${esc(currentProfile() ? currentProfile().name : '我')}</span>
         </button>
         <div class="sync-bar" data-sync-status></div>
       </div>
@@ -601,14 +601,10 @@ function renderSettings(view) {
     <div class="card set-group">
       <div class="set-row">
         <div class="label">
-          <b>账号与同步</b>
-          <span>${isLoggedIn()
-            ? '已登录 ' + esc(Cloud.username) + '，数据自动同步到云端'
-            : '登录后换设备也能取回全部安排'}</span>
+          <b>本机档案</b>
+          <span>当前：${esc(currentProfile() ? currentProfile().name : '我')} · 数据只保存在这台设备</span>
         </div>
-        <button class="btn sm ${isLoggedIn() ? 'ghost' : 'primary'}" data-act="open-account">
-          ${isLoggedIn() ? '管理' : '登录'}
-        </button>
+        <button class="btn sm ghost" data-act="open-account">管理</button>
       </div>
     </div>
 
