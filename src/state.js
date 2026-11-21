@@ -428,10 +428,17 @@ function checkReminders() {
   if (!S.settings.reminders) return;
   const today = C.todayISO();
   const nowMin = C.currentMin();
-  const before = S.settings.remindBefore || 10;
 
   S.tasks.forEach(t => {
     if (t.done || !t.due) return;
+    if (t.isEvent) return;                 // 固定安排不提醒
+
+    // 每个任务可以用自己的提前量；null 表示跟随全局设置
+    const before = (t.remindBefore === null || t.remindBefore === undefined)
+      ? (S.settings.remindBefore || 10)
+      : t.remindBefore;
+    if (before <= 0) return;               // 设为 0 = 不提醒
+
     const key = 'task:' + t.id + ':' + today + ':' + (t.dueTime || 'allday');
     if (S.fired[key]) return;
 
@@ -459,7 +466,7 @@ function checkReminders() {
   // 每天 21:00 之后预告明天的任务
   if (nowMin >= 21 * 60) {
     const tomorrow = C.addDaysISO(today, 1);
-    const tmr = S.tasks.filter(t => !t.done && t.due === tomorrow);
+    const tmr = S.tasks.filter(t => !t.done && !t.isEvent && t.due === tomorrow);
     const key = 'tomorrow:' + today;
     if (tmr.length && !S.fired[key]) {
       S.fired[key] = 1;
@@ -472,6 +479,19 @@ function checkReminders() {
   if (keys.length > 60) {
     keys.filter(k => !k.includes(today)).forEach(k => { delete S.fired[k]; });
   }
+}
+
+/* ---------------- 已完成任务自动清理（保留 7 天） ---------------- */
+function autoPruneDoneTasks() {
+  if (!Array.isArray(S.tasks) || S.tasks.length === 0) return 0;
+  const today = C.todayISO();
+  const result = C.pruneDoneTasks(S.tasks, today);
+  if (result.removed.length === 0) return 0;
+
+  S.tasks = result.kept;
+  S.prunedCount = (S.prunedCount || 0) + result.removed.length;
+  try { save(); } catch (e) {}
+  return result.removed.length;
 }
 
 function notify(title, body) {
