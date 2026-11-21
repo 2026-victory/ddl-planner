@@ -1,7 +1,7 @@
 name: Build Android APK
 
 # 编译 APK 并发布到 Release（免登录下载）
-# 触发：Actions 页面手动 Run workflow
+# 每次运行自动递增 versionCode，保证新版本能覆盖安装旧版本
 
 on:
   workflow_dispatch:
@@ -74,6 +74,33 @@ jobs:
           fi
           npx cap sync android
 
+      # 关键：设置递增的 versionCode 和可读的 versionName
+      # 否则每次都是 versionCode 1，安卓会拒绝覆盖安装
+      - name: 设置版本号
+        run: |
+          set -euo pipefail
+          BUILD_NUM=${{ github.run_number }}
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          echo "versionName=${BASE_VERSION}.${BUILD_NUM}" >> "$GITHUB_ENV"
+          echo "versionCode=${BUILD_NUM}" >> "$GITHUB_ENV"
+
+          GRADLE=android/app/build.gradle
+          if [ ! -f "$GRADLE" ]; then
+            echo "::error::找不到 $GRADLE"
+            ls android/app/ || true
+            exit 1
+          fi
+
+          echo "--- 修改前 ---"
+          grep -E "versionCode|versionName" "$GRADLE" || true
+
+          # 替换 versionCode / versionName（两者都在 defaultConfig 里）
+          sed -i -E "s/versionCode [0-9]+/versionCode ${BUILD_NUM}/g" "$GRADLE"
+          sed -i -E "s/versionName \"[^\"]*\"/versionName \"${BASE_VERSION}.${BUILD_NUM}\"/g" "$GRADLE"
+
+          echo "--- 修改后 ---"
+          grep -E "versionCode|versionName" "$GRADLE" || true
+
       - name: 授予 gradlew 执行权限
         run: chmod +x android/gradlew
 
@@ -81,14 +108,16 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
-      # 把产物重命名成好认的名字
-      - name: 重命名 APK
+      - name: 重命名并校验 APK
         run: |
+          set -euo pipefail
           mkdir -p out
           cp android/app/build/outputs/apk/debug/app-debug.apk out/ddl-buhuang.apk
           ls -lh out/
+          echo "APK 版本信息："
+          echo "  versionCode: ${versionCode}"
+          echo "  versionName: ${versionName}"
 
-      # 上传到 Actions 产物（需登录下载）
       - name: 上传到 Actions 产物
         uses: actions/upload-artifact@v4
         with:
@@ -96,12 +125,12 @@ jobs:
           path: out/ddl-buhuang.apk
           retention-days: 30
 
-      # 发布到 Release（免登录直接下载，可发微信）
+      # 发布到 Release（免登录直接下载，链接可发微信）
       - name: 发布到 Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: DDL 不慌 构建 ${{ github.run_number }}
+          name: DDL 不慌 v${{ env.versionName }}
           body: |
             ## 安装说明
 
@@ -109,8 +138,12 @@ jobs:
             2. 点下方 `ddl-buhuang.apk` 下载
             3. 点开安装，允许「未知来源」
 
+            **版本：** `${{ env.versionName }}`（versionCode `${{ env.versionCode }}`）
+
             **数据只存手机本地，不联网、不需要注册。**
 
-            > 覆盖安装不会丢数据；卸载重装会丢，请先在应用内「设置 → 备份数据」导出。
+            > ✅ 直接覆盖安装即可更新，**数据不会丢**
+            > ❌ 不要先卸载，卸载会清空数据
+            > 💾 重要数据建议先在应用内「设置 → 备份数据」导出
           files: out/ddl-buhuang.apk
           fail_on_unmatched_files: true
