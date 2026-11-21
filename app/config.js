@@ -19,6 +19,6 @@ window.APP_CONFIG = {
 
   // 版本号 —— 打包时由 build.js 自动写入，用于确认「更新是否装成功」
   VERSION: '1.0.0',
-  BUILD_TIME: '2026-11-21 12:26',
-  BUILD_ID: '202611211226'
+  BUILD_TIME: '2026-11-21 12:44',
+  BUILD_ID: '202611211244'
 };
