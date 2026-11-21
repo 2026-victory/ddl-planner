@@ -1,13 +1,16 @@
 name: Build Android APK
 
-# 纯本地版：数据存在手机里，不需要后端、不需要填写任何地址。
-# 触发：GitHub 网页手动点 Run workflow，或推送 v* 标签
+# 编译 APK 并发布到 Release（免登录下载）
+# 触发：Actions 页面手动 Run workflow
 
 on:
   workflow_dispatch:
   push:
     tags:
       - 'v*'
+
+permissions:
+  contents: write     # 需要写 Release
 
 jobs:
   build:
@@ -44,7 +47,6 @@ jobs:
             exit 1
           fi
 
-          # 找 sdkmanager（cmdline-tools 下可能是 latest，也可能是版本号目录）
           SDKMGR=""
           for candidate in "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager; do
             [ -x "$candidate" ] && SDKMGR="$candidate"
@@ -56,7 +58,6 @@ jobs:
           fi
           echo "sdkmanager: $SDKMGR"
 
-          # 接受许可（失败不阻塞，Gradle 构建时会自动补装所需组件）
           yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
           echo "✓ SDK 配置完成"
 
@@ -80,9 +81,36 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: 上传 APK
+      # 把产物重命名成好认的名字
+      - name: 重命名 APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/ddl-buhuang.apk
+          ls -lh out/
+
+      # 上传到 Actions 产物（需登录下载）
+      - name: 上传到 Actions 产物
         uses: actions/upload-artifact@v4
         with:
           name: ddl-buhuang-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: out/ddl-buhuang.apk
           retention-days: 30
+
+      # 发布到 Release（免登录直接下载，可发微信）
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: DDL 不慌 构建 ${{ github.run_number }}
+          body: |
+            ## 安装说明
+
+            1. 手机浏览器打开本页
+            2. 点下方 `ddl-buhuang.apk` 下载
+            3. 点开安装，允许「未知来源」
+
+            **数据只存手机本地，不联网、不需要注册。**
+
+            > 覆盖安装不会丢数据；卸载重装会丢，请先在应用内「设置 → 备份数据」导出。
+          files: out/ddl-buhuang.apk
+          fail_on_unmatched_files: true
