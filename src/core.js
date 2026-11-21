@@ -14,10 +14,10 @@
     workStart: '08:30',
     workEnd: '22:30',
     focusMax: 45,      // 单个时间块最长（分钟）
-    breakLen: 10,      // 块间休息（分钟）
+    breakLen: 15,      // 块间休息（分钟）
     minSlice: 15,      // 小于该值不再切块
     reminders: true,
-    remindBefore: 10,
+    remindBefore: 10,  // 默认提前提醒分钟数
     capacityWarn: 0.9
   };
 
@@ -114,25 +114,42 @@
       createdAt: todayISO(),
       subtasks: [],
       // —— 新增 ——
-      repeat: null,        // { freq:'weekly', weekday:1, until:'2026-12-31' } / daily / monthly
+      repeat: null,        // { freq:'weekly', weekday:1, weekdays:[1,4], until:'2026-12-31' }
       fixedStart: null,    // '19:00' 指定时间段开始（会锁定排程）
       fixedEnd: null,      // '20:30'
-      seriesId: null       // 同一重复系列共享的 id，便于整体操作
+      seriesId: null,      // 同一重复系列共享的 id
+      remindBefore: null,  // 该任务单独设置提前提醒分钟数；null=用全局默认
+      isEvent: false       // true=固定安排（不做完成勾选、不需提醒）
     }, t || {});
     task.difficulty = clamp(Math.round(numOr(task.difficulty, 3)), 1, 5);
     task.importance = clamp(Math.round(numOr(task.importance, 3)), 1, 5);
     task.estimate = Math.max(0, Math.round(numOr(task.estimate, 0)));
     task.spent = Math.max(0, Math.round(numOr(task.spent, 0)));
     task.note = task.note || '';
+    task.isEvent = !!task.isEvent;
+    // 单独的提醒时间：null 表示跟随全局设置；0 表示不提醒
+    if (task.remindBefore === undefined || task.remindBefore === null || task.remindBefore === '') {
+      task.remindBefore = null;
+    } else {
+      task.remindBefore = clamp(Math.round(numOr(task.remindBefore, 10)), 0, 1440);
+    }
 
     // 重复规则规范化
     if (task.repeat && task.repeat.freq) {
       var r = task.repeat;
       var freq = String(r.freq);
       if (freq !== 'daily' && freq !== 'weekly' && freq !== 'monthly' && freq !== 'weekday') freq = 'weekly';
+      var wds = (r.weekdays && r.weekdays.length)
+        ? r.weekdays.map(function (x) { return clamp(Math.round(numOr(x, 1)), 0, 6); })
+            .filter(function (x, i, arr) { return arr.indexOf(x) === i; })
+            .sort(function (a, b) { return a - b; })
+        : null;
       task.repeat = {
         freq: freq,
-        weekday: (r.weekday === null || r.weekday === undefined) ? parseISO(task.due || todayISO()).getDay() : clamp(Math.round(numOr(r.weekday, 1)), 0, 6),
+        weekday: (r.weekday === null || r.weekday === undefined)
+          ? (wds && wds.length ? wds[0] : parseISO(task.due || todayISO()).getDay())
+          : clamp(Math.round(numOr(r.weekday, 1)), 0, 6),
+        weekdays: wds,
         monthDay: clamp(Math.round(numOr(r.monthDay, 1)), 1, 31),
         until: r.until || null,
         count: r.count || null
@@ -210,6 +227,7 @@
   /** 状态：done | overdue | today | soon | later | anytime */
   function statusOf(task, today) {
     if (task.done) return 'done';
+    if (task.isEvent) return 'event';       // 固定安排没有"到期"概念
     var dl = daysLeft(task, today);
     if (dl === null) return 'anytime';
     if (dl < 0) return 'overdue';
@@ -570,7 +588,14 @@
     if (repeat.freq === 'daily') return '每天';
     if (repeat.freq === 'weekday') return '每个工作日';
     if (repeat.freq === 'monthly') return '每月 ' + (repeat.monthDay || 1) + ' 日';
-    if (repeat.freq === 'weekly') return '每' + WEEKDAYS[repeat.weekday === undefined ? 1 : repeat.weekday];
+    if (repeat.freq === 'weekly') {
+      var list = (repeat.weekdays && repeat.weekdays.length)
+        ? repeat.weekdays
+        : [repeat.weekday === undefined ? 1 : repeat.weekday];
+      if (list.length === 1) return '每' + WEEKDAYS[list[0]];
+      if (list.length === 7) return '每天';
+      return '每' + list.map(function (d) { return WEEKDAYS[d].replace('周', ''); }).join('、');
+    }
     return '';
   }
 
@@ -587,7 +612,11 @@
       return d.getDate() === Math.min(want, dim);
     }
     if (repeat.freq === 'weekly') {
-      return dow === (repeat.weekday === undefined ? 1 : repeat.weekday);
+      // 支持多选星期（weekdays 数组），否则用单个 weekday
+      var list = (repeat.weekdays && repeat.weekdays.length)
+        ? repeat.weekdays
+        : [repeat.weekday === undefined ? 1 : repeat.weekday];
+      return list.indexOf(dow) !== -1;
     }
     return false;
   }
@@ -637,6 +666,45 @@
         })
       }));
     });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 已完成任务的保留与清理
+   * ------------------------------------------------------------------ */
+  var DONE_KEEP_DAYS = 7;
+
+  /** 该任务是否已超过保留期（应被清理） */
+  function isExpiredDone(task, today) {
+    if (!task || !task.done) return false;
+    today = today || todayISO();
+    var base = task.doneAt || task.createdAt;
+    if (!base) return false;
+    var diff = daysBetween(String(base).slice(0, 10), today);
+    return diff > DONE_KEEP_DAYS;
+  }
+
+  /**
+   * 清理过期已完成任务
+   * @returns {{kept: Array, removed: Array}}
+   */
+  function pruneDoneTasks(tasks, today) {
+    today = today || todayISO();
+    var kept = [], removed = [];
+    (tasks || []).forEach(function (t) {
+      if (isExpiredDone(t, today)) removed.push(t);
+      else kept.push(t);
+    });
+    return { kept: kept, removed: removed };
+  }
+
+  /** 还剩几天被清理（用于界面提示） */
+  function daysUntilPrune(task, today) {
+    if (!task || !task.done) return null;
+    today = today || todayISO();
+    var base = task.doneAt || task.createdAt;
+    if (!base) return null;
+    var used = daysBetween(String(base).slice(0, 10), today);
+    return Math.max(0, DONE_KEEP_DAYS - used);
   }
 
   /* ------------------------------------------------------------------ *
@@ -820,18 +888,22 @@
         subId: null,
         title: t.title,
         parentTitle: t.title,
-        score: scoreOf(t, nowISO).score,
+        score: t.isEvent ? 0 : scoreOf(t, nowISO).score,
         due: t.due || null,
-        kind: 'work',
-        locked: true
+        kind: t.isEvent ? 'event' : 'work',
+        locked: true,
+        isEvent: !!t.isEvent
       });
       remaining[t.id + '|'] = 0;   // 该任务今天已占用整段时间
     });
 
-    // 锁定块占掉的时间从空闲里扣除
+    // 锁定块占掉的时间从空闲里扣除（含固定安排）
     lockedBlocks.forEach(function (lb) {
       slots = subtractRange(slots, lb.startMin, lb.endMin);
     });
+
+    // 每个锁定块后面留一段休息，避免紧接着排任务
+    var restLen = Math.max(0, settings.breakLen || 0);
 
     var minSlice = Math.max(5, settings.minSlice || 15);
     var focusMax = Math.max(15, settings.focusMax || 45);
@@ -1225,6 +1297,66 @@
   }
 
   /**
+   * 解析重复规则
+   * 支持：每周一 / 每星期一 / 每周一和周四 / 每天 / 每日 / 每个工作日 / 每月15号
+   * 返回 { repeat, matched }，matched 是应当从标题里移除的原文
+   */
+  var CN_WEEK = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0, '七': 0 };
+
+  function parseCnWeekList(str) {
+    var out = [];
+    var re = /([一二三四五六日天七])/g;
+    var m;
+    while ((m = re.exec(str))) {
+      var v = CN_WEEK[m[1]];
+      if (v !== undefined && out.indexOf(v) === -1) out.push(v);
+    }
+    return out;
+  }
+
+  function matchRepeat(text) {
+    var s = String(text || '');
+
+    // 每天 / 每日 / 天天
+    var m = s.match(/每\s*[天日]|天天/);
+    if (m) {
+      return { repeat: { freq: 'daily' }, matched: m[0] };
+    }
+
+    // 每个工作日 / 每工作日 / 周一到周五
+    m = s.match(/每\s*个?\s*工作日|周一至周五|周一到周五/);
+    if (m) {
+      return { repeat: { freq: 'weekday' }, matched: m[0] };
+    }
+
+    // 每周X / 每星期X / 每礼拜X，可带多个：每周一和周四、每周一、三、五
+    m = s.match(/每\s*(?:周|星期|礼拜)\s*([一二三四五六日天七周星期礼拜号、,，和与及/\s]*)/);
+    if (m) {
+      var body = m[1] || '';
+      var days = parseCnWeekList(body);
+      if (days.length) {
+        return {
+          repeat: { freq: 'weekly', weekday: days[0], weekdays: days },
+          matched: m[0].replace(/\s+$/, '')
+        };
+      }
+      // “每周”单说 → 取截止日/今天的星期
+      return { repeat: { freq: 'weekly', weekday: null, weekdays: null }, matched: m[0].replace(/\s+$/, '') };
+    }
+
+    // 每月X号 / 每月X日
+    m = s.match(/每\s*个?\s*月\s*(\d{1,2}|[一二三四五六七八九十]+)\s*[号日]?/);
+    if (m) {
+      var d = cnToInt(m[1]);
+      if (!isNaN(d) && d >= 1 && d <= 31) {
+        return { repeat: { freq: 'monthly', monthDay: d }, matched: m[0] };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * 解析一句自然语言任务
    * 例：明天下午3点前交高数作业，预计2小时，很难
    */
@@ -1232,13 +1364,22 @@
     today = today || todayISO();
     var raw = String(text || '').trim();
     var spans = [];
-    var dateHit = matchDate(raw, today);
-    var timeHit = matchTime(raw);
+
+    // 先解析重复规则（必须在日期之前，否则“每周一”里的“周一”会被当成日期吃掉）
+    var repeatHit = matchRepeat(raw);
+    var repeatText = repeatHit ? repeatHit.matched : '';
+
+    // 移除重复表达后再解析日期/时间，避免冲突
+    var rest = repeatText ? raw.split(repeatText).join(' ') : raw;
+
+    var dateHit = matchDate(rest, today);
+    var timeHit = matchTime(rest);
     // 时长从“去掉时间点”的文本里找，避免把 “3点30分” 的 30分 当成时长
-    var durHit = matchDuration(timeHit ? raw.replace(timeHit.matched, ' ') : raw);
+    var durHit = matchDuration(timeHit ? rest.replace(timeHit.matched, ' ') : rest);
     var diff = guessDifficulty(raw);
     var imp = guessImportance(raw);
 
+    if (repeatText) spans.push(repeatText);
     if (dateHit) spans.push(dateHit.matched);
     if (timeHit) spans.push(timeHit.matched);
     if (durHit) spans.push(durHit.matched);
@@ -1249,6 +1390,21 @@
 
     var title = cleanTitle(raw, spans);
     var due = dateHit ? dateHit.iso : null;
+
+    // 重复规则：每周没指定星期时，用截止日（或今天）的星期补上
+    var repeat = null;
+    if (repeatHit) {
+      repeat = Object.assign({}, repeatHit.repeat);
+      if (repeat.freq === 'weekly' && (repeat.weekday === null || repeat.weekday === undefined)) {
+        repeat.weekday = parseISO(due || today).getDay();
+        repeat.weekdays = [repeat.weekday];
+      }
+      if (repeat.freq === 'weekly' && !repeat.weekdays) {
+        repeat.weekdays = [repeat.weekday];
+      }
+    }
+    // 有重复规则时，默认从今天开始系列
+    if (repeat && !due) due = today;
     if (!due && timeHit) due = today;
 
     return {
@@ -1258,12 +1414,14 @@
       estimate: durHit ? durHit.minutes : guessEstimate(title, diff),
       difficulty: diff || 3,
       importance: imp || 3,
+      repeat: repeat,
       parsed: {
         date: !!dateHit,
         time: !!timeHit,
         duration: !!durHit,
         difficulty: diff !== null,
-        importance: imp !== null
+        importance: imp !== null,
+        repeat: !!repeat
       }
     };
   }
@@ -1385,6 +1543,10 @@
     materializeRepeat: materializeRepeat,
     detectDomain: detectDomain,
     breakdown: breakdown,
+    DONE_KEEP_DAYS: DONE_KEEP_DAYS,
+    isExpiredDone: isExpiredDone,
+    pruneDoneTasks: pruneDoneTasks,
+    daysUntilPrune: daysUntilPrune,
     dailyQuota: dailyQuota,
     collectChunks: collectChunks,
     freeSlots: freeSlots,
