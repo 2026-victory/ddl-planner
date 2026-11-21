@@ -19,7 +19,7 @@ jobs:
       - name: 安装 Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: 安装 Java 17
         uses: actions/setup-java@v4
@@ -27,8 +27,38 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
+      # 不使用 android-actions/setup-android：
+      # 它默认安装 "tools platform-tools"，而 Google 已从 SDK 仓库移除
+      # 过时的 `tools` 包，导致 "Failed to find package 'tools'" 退出码 1。
+      # ubuntu-latest 镜像已预装 Android SDK，这里只需接受许可。
+      - name: 配置 Android SDK
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "SDK_ROOT=$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+
+          if [ ! -d "$SDK_ROOT" ]; then
+            echo "::error::未找到 Android SDK 目录：$SDK_ROOT"
+            exit 1
+          fi
+
+          # 找 sdkmanager（cmdline-tools 下可能是 latest，也可能是版本号目录）
+          SDKMGR=""
+          for candidate in "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager; do
+            [ -x "$candidate" ] && SDKMGR="$candidate"
+          done
+          if [ -z "$SDKMGR" ]; then
+            echo "::error::未找到 sdkmanager"
+            ls "$SDK_ROOT" || true
+            exit 1
+          fi
+          echo "sdkmanager: $SDKMGR"
+
+          # 接受许可（失败不阻塞，Gradle 构建时会自动补装所需组件）
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          echo "✓ SDK 配置完成"
 
       - name: 构建前端
         run: node build.js
