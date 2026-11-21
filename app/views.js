@@ -597,6 +597,7 @@ function openInstallGuide() {
 function renderSettings(view) {
   const s = S.settings;
   const notifPerm = window.Notification ? Notification.permission : 'unsupported';
+  const doneCount = S.tasks.filter(t => t.done).length;
   view.innerHTML = `
     <div class="card set-group">
       <div class="set-row">
@@ -697,6 +698,13 @@ function renderSettings(view) {
           <span>当前版本 ${esc(appVersion())}${appBuildTime() ? ' · ' + esc(appBuildTime()) : ''}</span>
         </div>
         <button class="btn sm ghost" data-act="check-update">检查</button>
+      </div>
+      <div class="set-row">
+        <div class="label">
+          <b>清理已完成任务</b>
+          <span>已完成的任务自动保留 7 天后删除；${doneCount > 0 ? `当前有 ${doneCount} 个已完成` : '当前没有已完成任务'}</span>
+        </div>
+        <button class="btn sm ghost" data-act="prune-done" ${doneCount > 0 ? '' : 'disabled'}>立即清理</button>
       </div>
       <div class="set-row">
         <div class="label"><b>清空示例数据</b><span>删除所有任务与安排，回到空白状态</span></div>
@@ -810,19 +818,25 @@ function openTaskEditor(taskId, presetDate) {
       </div>
 
       <div class="field">
-        <label>重复 <span class="hint">每周固定要做的事会自动排进每一天</span></label>
+        <label>重复 <span class="hint">可多选星期几</span></label>
         <div class="scale repeat" id="f-repeat">
-          ${[['none', '不重复'], ['daily', '每天'], ['weekday', '工作日'], ['weekly', '每周'], ['monthly', '每月']]
+          ${[['none', '不重复'], ['daily', '每天'], ['weekday', '工作日'], ['weekly', '按星期'], ['monthly', '每月']]
             .map(([v, label]) => {
-              const cur = t.repeat ? (t.repeat.freq === 'weekly' ? 'weekly' : t.repeat.freq) : 'none';
+              const cur = t.repeat ? t.repeat.freq : 'none';
               return `<button type="button" data-freq="${v}" class="${cur === v ? 'on' : ''}">${label}</button>`;
             }).join('')}
         </div>
         <div id="f-weekday-wrap" class="weekday-picker ${t.repeat && t.repeat.freq === 'weekly' ? '' : 'hidden'}">
           ${['日', '一', '二', '三', '四', '五', '六'].map((w, i) => {
-            const sel = t.repeat && t.repeat.freq === 'weekly' && t.repeat.weekday === i;
+            const list = t.repeat && t.repeat.weekdays && t.repeat.weekdays.length
+              ? t.repeat.weekdays
+              : (t.repeat && t.repeat.freq === 'weekly' ? [t.repeat.weekday] : []);
+            const sel = list.indexOf(i) !== -1;
             return `<button type="button" data-wd="${i}" class="${sel ? 'on' : ''}">${w}</button>`;
           }).join('')}
+          <div class="hint" style="font-size:11px;color:var(--ink-3);width:100%;margin-top:4px">
+            点一下选中，可多选；再点取消
+          </div>
         </div>
         <div id="f-monthday-wrap" class="weekday-picker ${t.repeat && t.repeat.freq === 'monthly' ? '' : 'hidden'}">
           ${Array.from({ length: 31 }, (_, i) => i + 1).map(d => {
@@ -837,6 +851,31 @@ function openTaskEditor(taskId, presetDate) {
           <div class="hint" style="font-size:11px;color:var(--ink-3);margin-top:5px">
             留空 = 一直重复（最多为你排到 90 天后）
           </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>提醒 <span class="hint">每个任务可以单独设置</span></label>
+        <div class="scale remind" id="f-remind">
+          ${[['', '默认'], ['0', '不提醒'], ['5', '提前5分'], ['10', '提前10分'], ['30', '提前30分'], ['60', '提前1小时']]
+            .map(([v, label]) => {
+              const cur = (t.remindBefore === null || t.remindBefore === undefined) ? '' : String(t.remindBefore);
+              return `<button type="button" data-remind="${v}" class="${cur === v ? 'on' : ''}">${label}</button>`;
+            }).join('')}
+        </div>
+        <div class="hint" style="font-size:11px;color:var(--ink-3);margin-top:5px">
+          「默认」跟随设置页里的全局值
+        </div>
+      </div>
+
+      <div class="field">
+        <label>固定安排 <span class="hint">锁定时间，不需要完成打卡</span></label>
+        <div class="scale" id="f-isevent">
+          <button type="button" data-ie="0" class="${t.isEvent ? '' : 'on'}">普通任务</button>
+          <button type="button" data-ie="1" class="${t.isEvent ? 'on' : ''}">固定安排</button>
+        </div>
+        <div class="hint" style="font-size:11px;color:var(--ink-3);margin-top:5px">
+          固定安排（上课、开会、通勤）会占住时间，自动排程会绕开它
         </div>
       </div>
 
@@ -890,6 +929,30 @@ function openTaskEditor(taskId, presetDate) {
           if (parsed.parsed.duration) tags.push('⏱ ' + C.fmtDuration(parsed.estimate));
           if (parsed.parsed.difficulty) tags.push('🔥 难度 ' + parsed.difficulty);
           if (parsed.parsed.importance) tags.push('⭐ 重要 ' + parsed.importance);
+
+          // 识别到重复规则 → 自动填充重复选择器
+          if (parsed.repeat) {
+            const freqBtn = $(`#f-repeat [data-freq="${parsed.repeat.freq}"]`);
+            if (freqBtn) {
+              $$('#f-repeat button').forEach(x => x.classList.toggle('on', x === freqBtn));
+            }
+            if (parsed.repeat.freq === 'weekly') {
+              const list = parsed.repeat.weekdays && parsed.repeat.weekdays.length
+                ? parsed.repeat.weekdays
+                : [parsed.repeat.weekday];
+              $$('#f-weekday-wrap button').forEach(b => {
+                b.classList.toggle('on', list.indexOf(+b.dataset.wd) !== -1);
+              });
+            }
+            if (parsed.repeat.freq === 'monthly') {
+              $$('#f-monthday-wrap button').forEach(b => {
+                b.classList.toggle('on', +b.dataset.md === parsed.repeat.monthDay);
+              });
+            }
+            syncRepeatUI();
+            tags.push('🔁 ' + C.repeatLabel(parsed.repeat));
+          }
+
           preview.innerHTML = `识别到：<b>${esc(parsed.title)}</b><br>${tags.length ? tags.map(x => `<span class="tag">${esc(x)}</span>`).join('') : '<span class="muted">没识别到日期，默认今天</span>'}`;
           preview.classList.add('show');
         };
@@ -929,11 +992,31 @@ function openTaskEditor(taskId, presetDate) {
         $$('#f-repeat button').forEach(x => x.classList.toggle('on', x === b));
         syncRepeatUI();
       }));
+      // 多选星期：点一下切换，不取消其它已选项
       $$('#f-weekday-wrap button').forEach(b => b.addEventListener('click', () => {
-        $$('#f-weekday-wrap button').forEach(x => x.classList.toggle('on', x === b));
+        b.classList.toggle('on');
+        // 至少要留一个
+        if (!$('#f-weekday-wrap button.on')) b.classList.add('on');
       }));
       $$('#f-monthday-wrap button').forEach(b => b.addEventListener('click', () => {
         $$('#f-monthday-wrap button').forEach(x => x.classList.toggle('on', x === b));
+      }));
+
+      // —— 提醒 ——
+      $$('#f-remind button').forEach(b => b.addEventListener('click', () => {
+        $$('#f-remind button').forEach(x => x.classList.toggle('on', x === b));
+      }));
+
+      // —— 固定安排 ——
+      $$('#f-isevent button').forEach(b => b.addEventListener('click', () => {
+        $$('#f-isevent button').forEach(x => x.classList.toggle('on', x === b));
+        const isEv = b.dataset.ie === '1';
+        // 固定安排通常需要时间段，自动展开提示
+        if (isEv && !$('#f-fixed-start').value) {
+          $('#f-fixed-start').value = '09:00';
+          $('#f-fixed-end').value = '10:00';
+          syncFixed();
+        }
       }));
 
       // —— 指定时间段：自动算出工时 ——
@@ -973,21 +1056,34 @@ function readEditor() {
   const curDiff = $('#f-diff button.on');
   const curImp = $('#f-imp button.on');
 
-  // —— 重复规则 ——
+  // —— 重复规则（支持多选星期） ——
   const freqBtn = $('#f-repeat button.on');
   const freq = freqBtn ? freqBtn.dataset.freq : 'none';
   let repeat = null;
   if (freq !== 'none') {
     repeat = { freq: freq, until: ($('#f-until') || {}).value || null };
     if (freq === 'weekly') {
-      const wd = $('#f-weekday-wrap button.on');
-      repeat.weekday = wd ? +wd.dataset.wd : C.parseISO(($('#f-due') || {}).value || C.todayISO()).getDay();
+      const chosen = $$('#f-weekday-wrap button.on').map(b => +b.dataset.wd).sort((a, b) => a - b);
+      const list = chosen.length ? chosen : [C.parseISO(($('#f-due') || {}).value || C.todayISO()).getDay()];
+      repeat.weekdays = list;
+      repeat.weekday = list[0];
     }
     if (freq === 'monthly') {
       const md = $('#f-monthday-wrap button.on');
       repeat.monthDay = md ? +md.dataset.md : C.parseISO(($('#f-due') || {}).value || C.todayISO()).getDate();
     }
   }
+
+  // —— 提醒 ——
+  const remBtn = $('#f-remind button.on');
+  let remindBefore = null;
+  if (remBtn && remBtn.dataset.remind !== '') {
+    remindBefore = +remBtn.dataset.remind;
+  }
+
+  // —— 固定安排 ——
+  const ieBtn = $('#f-isevent button.on');
+  const isEvent = ieBtn ? ieBtn.dataset.ie === '1' : false;
 
   // —— 指定时间段 ——
   const a = ($('#f-fixed-start') || {}).value || '';
@@ -1005,7 +1101,9 @@ function readEditor() {
     note: ($('#f-note') ? $('#f-note').value : '').trim(),
     repeat: repeat,
     fixedStart: fixedStart,
-    fixedEnd: fixedEnd
+    fixedEnd: fixedEnd,
+    remindBefore: remindBefore,
+    isEvent: isEvent
   };
 }
 
