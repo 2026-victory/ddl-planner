@@ -248,6 +248,15 @@ const ACTIONS = {
   'new-profile'() {
     doNewProfile();
   },
+  'prune-done'() {
+    const done = S.tasks.filter(t => t.done);
+    if (!done.length) { toast('没有已完成的任务'); return; }
+    if (!confirm(`立即删除 ${done.length} 个已完成任务？\n\n（不做这个操作的话，它们会在完成 7 天后自动删除）`)) return;
+    S.tasks = S.tasks.filter(t => !t.done);
+    save();
+    render();
+    toast(`已清理 ${done.length} 个已完成任务`);
+  },
   'delete-profile'(el) {
     doDeleteProfile(el.dataset.id);
   },
@@ -457,6 +466,12 @@ function boot() {
 
   // 记录本地最后修改时间（用于和云端比新旧）
   S.localUpdatedAt = Date.now();
+
+  // 自动清理：已完成任务保留 7 天后删除
+  const pruned = autoPruneDoneTasks();
+  if (pruned > 0) {
+    setTimeout(() => toast(`已自动清理 ${pruned} 个超过 7 天的已完成任务`, 2600), 1500);
+  }
 
   render();
   renderStorageBanner();
