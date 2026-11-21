@@ -1,0 +1,13 @@
+{
+  "appId": "com.ddlbuhuang.app",
+  "appName": "DDL不慌",
+  "webDir": "app",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
