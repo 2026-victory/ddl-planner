@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 构建产物（每次 build 都会重新生成，不必进版本库）
+# 注意：app/ 必须提交，因为它是 Capacitor 的 webDir
+dist/
+
+# 后端运行时数据（账号、任务数据，绝对不要提交！）
+server-data/
+
+# Capacitor 生成的安卓原生工程
+# 如果你要改原生代码（图标、权限），把它上面的 # 去掉，改为提交
+android/
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# 截图（体积大，不影响运行；想保留可删掉下面这行）
+# screenshots/
